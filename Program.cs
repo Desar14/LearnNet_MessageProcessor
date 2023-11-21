@@ -1,5 +1,6 @@
 ﻿using Azure.Identity;
 using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Configuration;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -9,24 +10,26 @@ namespace LearnNet_MessageProcessor
 {
     internal class Program
     {
-        static string CartingServiceBaseUrl = "https://localhost:7268/api/v1/CartItems";
-
-
         static async Task Main(string[] args)
         {
+            var configuration = new ConfigurationBuilder()
+                .AddJsonFile($"appsettings.json");
+
+            var config = configuration.Build();
+            
             ServiceBusClient client = new ServiceBusClient(
-                    "learningnet.servicebus.windows.net",
+                    config.GetConnectionString("ServiceBus:Namespace"),
                     new DefaultAzureCredential());
 
             // create a processor that we can use to process the messages
-            
-            ServiceBusProcessor processor = client.CreateProcessor("productupdates", "CatalogSubscription", new ServiceBusProcessorOptions());
+
+            ServiceBusProcessor processor = client.CreateProcessor(config.GetConnectionString("ServiceBus:Topic"), config.GetConnectionString("ServiceBus:Subscription"), new ServiceBusProcessorOptions());
 
             try
             {
                 // add handler to process messages
                 processor.ProcessMessageAsync += MessageHandler;
-                
+
                 // add handler to process any errors
                 processor.ProcessErrorAsync += ErrorHandler;
 
@@ -86,7 +89,7 @@ namespace LearnNet_MessageProcessor
 
                 var content = new StringContent(serializedModel, Encoding.UTF8, "application/json");
 
-                var response = await client.PutAsync(CartingServiceBaseUrl, content);
+                var response = await client.PutAsync(config.GetConnectionString("CartingService:BaseUrl"), content);
 
                 var responseString = await response.Content.ReadAsStringAsync();
 
@@ -95,21 +98,11 @@ namespace LearnNet_MessageProcessor
                     Console.WriteLine("Success");
                     // complete the message. messages is deleted from the subscription. 
                     await args.CompleteMessageAsync(args.Message);
-                    return;
                 }
-
-                if(response.StatusCode >= System.Net.HttpStatusCode.InternalServerError)
-                {
-                    Console.WriteLine("Can't be processed 500");
-                    //left for later processing, maybe it will get alive
-                    return;
-                }
-
-                if (response.StatusCode >= System.Net.HttpStatusCode.BadRequest)
+                else
                 {
                     Console.WriteLine("Can't be processed");
                     await args.DeadLetterMessageAsync(args.Message, "Can't be processed", responseString);
-                    return;
                 }
             }
 
@@ -121,6 +114,6 @@ namespace LearnNet_MessageProcessor
             }
         }
 
-        
+
     }
 }
